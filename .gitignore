@@ -1,2 +1,6 @@
 test_files
 test_files.zip
+
+# Avoid committing testing files by accident.
+*.png
+*.zip
