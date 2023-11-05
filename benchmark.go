@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strings"
 	"sync"
+	"text/tabwriter"
 	"time"
 )
 
@@ -27,9 +29,9 @@ type CommandInput struct {
 }
 
 var runs = []RunInput{
-	{CommandInput{"ect", []string{"-strict", "-3"}}, "1.png"},
-	{CommandInput{"ect", []string{"-strict", "-3"}}, "2.png"},
-	{CommandInput{"ect", []string{"-strict", "-3"}}, "3.png"},
+	{CommandInput{"ect", []string{"--strict", "-3"}}, "1.png"},
+	{CommandInput{"ect", []string{"--strict", "-3"}}, "2.png"},
+	{CommandInput{"ect", []string{"--strict", "-3"}}, "3.png"},
 	{CommandInput{"oxipng", []string{"-o", "2"}}, "1.png"},
 	{CommandInput{"oxipng", []string{"-o", "2"}}, "2.png"},
 	{CommandInput{"oxipng", []string{"-o", "2"}}, "3.png"},
@@ -57,20 +59,62 @@ func must(err error) {
 }
 
 func main() {
+	must(os.RemoveAll(workDirectory))
 	must(os.MkdirAll(workDirectory, 0755))
+
 	runResults := runAll(runs)
 	slices.SortFunc(runResults, func(a, b RunResult) int {
-		return a.Index - b.Index
+		if a.TargetFilePath == b.TargetFilePath {
+			return a.Index - b.Index
+		} else {
+			return strings.Compare(a.TargetFilePath, b.TargetFilePath)
+		}
 	})
 
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0)
+
+	fmt.Fprintln(w, "N°\tName\tArgs\tImg\tInitial\tOptimized\tWall\tSystem\tUser")
+
 	for _, runResult := range runResults {
-		fmt.Printf("Run %d: %s\n", runResult.Index, runResult.Err)
-		fmt.Printf("Initial size: %d bytes\n", runResult.InitialSize)
-		fmt.Printf("Optimized size: %d bytes\n", runResult.OptimizedSize)
-		fmt.Printf("Wall time: %s\n", runResult.WallTime)
-		fmt.Printf("System time: %s\n", runResult.SystemTime)
-		fmt.Printf("User time: %s\n", runResult.UserTime)
-		fmt.Printf("\n")
+		fmt.Fprintf(w,
+			"%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			runResult.Index,
+			runResult.CommandToRun.Name,
+			strings.Join(runResult.CommandToRun.Args, " "),
+			runResult.TargetFilePath,
+			Bytes(uint64(runResult.InitialSize)),
+			Bytes(uint64(runResult.OptimizedSize)),
+			formatDuration(runResult.WallTime),
+			formatDuration(runResult.SystemTime),
+			formatDuration(runResult.UserTime),
+		)
+	}
+
+	w.Flush()
+}
+
+// formatDuration formats a time.Duration into a human-readable string.
+func formatDuration(d time.Duration) string {
+	totalSeconds := d.Seconds()
+
+	switch {
+	case totalSeconds < 1:
+		// Use milliseconds for very short durations
+		return fmt.Sprintf("%.2fms", d.Seconds()*1000)
+	case totalSeconds < 60:
+		// Use seconds for durations less than a minute
+		return fmt.Sprintf("%.2fs", totalSeconds)
+	case totalSeconds < 3600:
+		// Use minutes and seconds for durations less than an hour
+		minutes := int(totalSeconds / 60)
+		seconds := int(totalSeconds) % 60
+		return fmt.Sprintf("%dm%02ds", minutes, seconds)
+	default:
+		// Use hours, minutes, and seconds for durations of an hour or more
+		hours := int(totalSeconds / 3600)
+		minutes := int(totalSeconds/60) % 60
+		seconds := int(totalSeconds) % 60
+		return fmt.Sprintf("%dh%02dm%02ds", hours, minutes, seconds)
 	}
 }
 

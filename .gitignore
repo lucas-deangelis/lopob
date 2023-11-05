@@ -4,3 +4,6 @@ test_files.zip
 # Avoid committing testing files by accident.
 *.png
 *.zip
+
+# go build output
+lopob
