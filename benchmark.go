@@ -3,9 +3,12 @@ package main
 import (
 	"embed"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"slices"
 	"sync"
+	"time"
 )
 
 //go:embed test_files
@@ -32,50 +35,126 @@ var runs = []RunInput{
 	{CommandInput{"oxipng", []string{"-o", "2"}}, "3.png"},
 }
 
-func main() {
-	runAll(runs)
+type RunData struct {
+	InitialSize   int64
+	OptimizedSize int64
+	WallTime      time.Duration
+	SystemTime    time.Duration
+	UserTime      time.Duration
 }
 
-func runAll(runs []RunInput) {
+type RunResult struct {
+	Index int
+	RunInput
+	RunData
+	Err error
+}
+
+func must(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+func main() {
+	must(os.MkdirAll(workDirectory, 0755))
+	runResults := runAll(runs)
+	slices.SortFunc(runResults, func(a, b RunResult) int {
+		return a.Index - b.Index
+	})
+
+	for _, runResult := range runResults {
+		fmt.Printf("Run %d: %s\n", runResult.Index, runResult.Err)
+		fmt.Printf("Initial size: %d bytes\n", runResult.InitialSize)
+		fmt.Printf("Optimized size: %d bytes\n", runResult.OptimizedSize)
+		fmt.Printf("Wall time: %s\n", runResult.WallTime)
+		fmt.Printf("System time: %s\n", runResult.SystemTime)
+		fmt.Printf("User time: %s\n", runResult.UserTime)
+		fmt.Printf("\n")
+	}
+}
+
+func runAll(runs []RunInput) []RunResult {
 	var wg sync.WaitGroup
+	results := make(chan RunResult, len(runs))
 
 	for i, run := range runs {
 		wg.Add(1)
 		go func(runIndex int, run RunInput) {
 			defer wg.Done()
-			_, err := runOne(i, run)
-			if err != nil {
-				panic(err)
+			data, err := runOne(runIndex, run)
+			results <- RunResult{
+				Index:    runIndex,
+				RunInput: run,
+				RunData:  data,
+				Err:      err,
 			}
 		}(i, run)
 	}
 
-	wg.Wait()
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var runResults []RunResult
+	for result := range results {
+		if result.Err != nil {
+			panic(result.Err)
+		}
+		runResults = append(runResults, result)
+	}
+
+	return runResults
 }
 
-func runOne(runIndex int, run RunInput) (string, error) {
+func runOne(runIndex int, run RunInput) (RunData, error) {
+	data := RunData{}
+
+	initialInfos, err := fs.Stat(testFiles, "test_files/"+run.TargetFilePath)
+	if err != nil {
+		return data, err
+	}
+	data.InitialSize = initialInfos.Size()
 	src, err := testFiles.ReadFile("test_files/" + run.TargetFilePath)
 	if err != nil {
-		return "", err
+		return data, err
 	}
 
 	tempFilePath := fmt.Sprintf("%s/%d.png", workDirectory, runIndex)
 
 	err = os.WriteFile(tempFilePath, src, 0644)
 	if err != nil {
-		return "", err
+		return data, err
 	}
+	defer os.Remove(tempFilePath)
 
-	nameAndArgs := append([]string{run.CommandToRun.Name}, run.CommandToRun.Args...)
-	nameAndArgsAndTargetFile := append(nameAndArgs, tempFilePath)
+	argsWithTargetPath := append(run.CommandToRun.Args, tempFilePath)
 
-	cmd := exec.Command("time", nameAndArgsAndTargetFile...)
+	cmd := exec.Command(run.CommandToRun.Name, argsWithTargetPath...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
+	start := time.Now()
 	err = cmd.Run()
+	data.WallTime = time.Since(start)
+
 	if err != nil {
-		return "", err
+		return data, err
 	}
-	return "", nil
+
+	if cmd.ProcessState != nil {
+		data.SystemTime = cmd.ProcessState.SystemTime()
+		data.UserTime = cmd.ProcessState.UserTime()
+	}
+
+	// Get the size of the file after the command ran
+	optimizedInfos, err := os.Stat(tempFilePath)
+	if err != nil {
+		return data, err
+	}
+
+	data.OptimizedSize = optimizedInfos.Size()
+
+	return data, nil
 }
