@@ -29,12 +29,16 @@ type CommandInput struct {
 }
 
 var runs = []RunInput{
-	{CommandInput{"ect", []string{"--strict", "-3"}}, "1.png"},
-	{CommandInput{"ect", []string{"--strict", "-3"}}, "2.png"},
-	{CommandInput{"ect", []string{"--strict", "-3"}}, "3.png"},
-	{CommandInput{"oxipng", []string{"-o", "2"}}, "1.png"},
-	{CommandInput{"oxipng", []string{"-o", "2"}}, "2.png"},
-	{CommandInput{"oxipng", []string{"-o", "2"}}, "3.png"},
+	{CommandInput{"ect", []string{"--strict", "-1"}}, "1.png"},
+	{CommandInput{"ect", []string{"--strict", "-1"}}, "2.png"},
+	{CommandInput{"ect", []string{"--strict", "-1"}}, "3.png"},
+	{CommandInput{"ect", []string{"--strict", "-1"}}, "4.png"},
+	{CommandInput{"ect", []string{"--strict", "-1"}}, "5.png"},
+	{CommandInput{"oxipng", []string{"-o", "0"}}, "1.png"},
+	{CommandInput{"oxipng", []string{"-o", "0"}}, "2.png"},
+	{CommandInput{"oxipng", []string{"-o", "0"}}, "3.png"},
+	{CommandInput{"oxipng", []string{"-o", "0"}}, "4.png"},
+	{CommandInput{"oxipng", []string{"-o", "0"}}, "5.png"},
 }
 
 type RunData struct {
@@ -73,17 +77,18 @@ func main() {
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0)
 
-	fmt.Fprintln(w, "N°\tName\tArgs\tImg\tInitial\tOptimized\tWall\tSystem\tUser")
+	fmt.Fprintln(w, "Tool\tArgs\tImg\tIn\tOut\tSaved\tWall\tSystem\tUser")
+	fmt.Fprintln(w, "----\t----\t---\t--\t---\t-----\t----\t------\t----")
 
 	for _, runResult := range runResults {
 		fmt.Fprintf(w,
-			"%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			runResult.Index,
+			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			runResult.CommandToRun.Name,
 			strings.Join(runResult.CommandToRun.Args, " "),
 			runResult.TargetFilePath,
 			Bytes(uint64(runResult.InitialSize)),
 			Bytes(uint64(runResult.OptimizedSize)),
+			fmt.Sprintf("%.2f%%", (((float64(runResult.InitialSize)-float64(runResult.OptimizedSize))/float64(runResult.InitialSize))*100.0)),
 			formatDuration(runResult.WallTime),
 			formatDuration(runResult.SystemTime),
 			formatDuration(runResult.UserTime),
