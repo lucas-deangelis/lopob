@@ -2,14 +2,15 @@ package main
 
 import (
 	"embed"
+	"encoding/csv"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"slices"
 	"strings"
 	"sync"
-	"text/tabwriter"
 	"time"
 )
 
@@ -17,6 +18,62 @@ import (
 var testFiles embed.FS
 
 const workDirectory = "work"
+
+var images = []string{
+	"1.png",
+	"2.png",
+	"3.png",
+	"4.png",
+	"5.png",
+	"6.png",
+	// "7.png",
+	// "8.png",
+	// "9.png",
+	// "10.png",
+	// "11.png",
+	// "12.png",
+	// "13.png",
+	// "14.png",
+	// "15.png",
+	// "16.png",
+	// "17.png",
+	// "18.png",
+	// "19.png",
+	// "20.png",
+	// "21.png",
+	// "22.png",
+	// "23.png",
+	// "24.png",
+	// "25.png",
+	// "26.png",
+	// "27.png",
+}
+
+var commands = []CommandInput{
+	{"ect", []string{"--strict", "-1"}},
+	// {"ect", []string{"--strict", "-2"}},
+	// {"ect", []string{"--strict", "-3"}},
+	// {"ect", []string{"--strict", "-4"}},
+	{"oxipng", []string{"-o", "0"}},
+	// {"oxipng", []string{"-o", "1"}},
+	// {"oxipng", []string{"-o", "2"}},
+	// {"oxipng", []string{"-o", "3"}},
+}
+
+func makeRunInputs(images []string, commands []CommandInput) []RunInput {
+	var runInputs []RunInput
+
+	for _, image := range images {
+		for _, command := range commands {
+			runInputs = append(runInputs, RunInput{
+				CommandToRun:   command,
+				TargetFilePath: image,
+			})
+		}
+	}
+
+	return runInputs
+}
 
 type RunInput struct {
 	CommandToRun   CommandInput
@@ -26,19 +83,6 @@ type RunInput struct {
 type CommandInput struct {
 	Name string
 	Args []string
-}
-
-var runs = []RunInput{
-	{CommandInput{"ect", []string{"--strict", "-1"}}, "1.png"},
-	{CommandInput{"ect", []string{"--strict", "-1"}}, "2.png"},
-	{CommandInput{"ect", []string{"--strict", "-1"}}, "3.png"},
-	{CommandInput{"ect", []string{"--strict", "-1"}}, "4.png"},
-	{CommandInput{"ect", []string{"--strict", "-1"}}, "5.png"},
-	{CommandInput{"oxipng", []string{"-o", "0"}}, "1.png"},
-	{CommandInput{"oxipng", []string{"-o", "0"}}, "2.png"},
-	{CommandInput{"oxipng", []string{"-o", "0"}}, "3.png"},
-	{CommandInput{"oxipng", []string{"-o", "0"}}, "4.png"},
-	{CommandInput{"oxipng", []string{"-o", "0"}}, "5.png"},
 }
 
 type RunData struct {
@@ -56,6 +100,20 @@ type RunResult struct {
 	Err error
 }
 
+func (r *RunResult) ToString() []string {
+	return []string{
+		r.CommandToRun.Name,
+		strings.Join(r.CommandToRun.Args, " "),
+		r.TargetFilePath,
+		Bytes(uint64(r.InitialSize)),
+		Bytes(uint64(r.OptimizedSize)),
+		fmt.Sprintf("%.2f%%", (((float64(r.InitialSize) - float64(r.OptimizedSize)) / float64(r.InitialSize)) * 100.0)),
+		formatDuration(r.WallTime),
+		formatDuration(r.SystemTime),
+		formatDuration(r.UserTime),
+	}
+}
+
 func must(err error) {
 	if err != nil {
 		panic(err)
@@ -66,7 +124,9 @@ func main() {
 	must(os.RemoveAll(workDirectory))
 	must(os.MkdirAll(workDirectory, 0755))
 
-	runResults := runAll(runs)
+	runs := makeRunInputs(images, commands)
+
+	runResults := runAllSequential(runs)
 	slices.SortFunc(runResults, func(a, b RunResult) int {
 		if a.TargetFilePath == b.TargetFilePath {
 			return a.Index - b.Index
@@ -75,27 +135,32 @@ func main() {
 		}
 	})
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0)
-
-	fmt.Fprintln(w, "Tool\tArgs\tImg\tIn\tOut\tSaved\tWall\tSystem\tUser")
-	fmt.Fprintln(w, "----\t----\t---\t--\t---\t-----\t----\t------\t----")
-
-	for _, runResult := range runResults {
-		fmt.Fprintf(w,
-			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			runResult.CommandToRun.Name,
-			strings.Join(runResult.CommandToRun.Args, " "),
-			runResult.TargetFilePath,
-			Bytes(uint64(runResult.InitialSize)),
-			Bytes(uint64(runResult.OptimizedSize)),
-			fmt.Sprintf("%.2f%%", (((float64(runResult.InitialSize)-float64(runResult.OptimizedSize))/float64(runResult.InitialSize))*100.0)),
-			formatDuration(runResult.WallTime),
-			formatDuration(runResult.SystemTime),
-			formatDuration(runResult.UserTime),
-		)
+	headers := []string{
+		"Tool",
+		"Args",
+		"Img",
+		"In",
+		"Out",
+		"Saved",
+		"Wall",
+		"System",
+		"User",
 	}
 
-	w.Flush()
+	reportFile, err := os.Create("report.csv")
+	if err != nil {
+		panic(fmt.Sprintf("error creating report.csv, result will only be printed to stdout: %v\n", err))
+	}
+
+	out := io.MultiWriter(os.Stdout, reportFile)
+	report := csv.NewWriter(out)
+
+	report.Write(headers)
+	for _, runResult := range runResults {
+		report.Write(runResult.ToString())
+
+	}
+	report.Flush()
 }
 
 // formatDuration formats a time.Duration into a human-readable string.
@@ -123,7 +188,23 @@ func formatDuration(d time.Duration) string {
 	}
 }
 
-func runAll(runs []RunInput) []RunResult {
+func runAllSequential(runs []RunInput) []RunResult {
+	var runResults []RunResult
+
+	for i, run := range runs {
+		data, err := runOne(i, run)
+		runResults = append(runResults, RunResult{
+			Index:    i,
+			RunInput: run,
+			RunData:  data,
+			Err:      err,
+		})
+	}
+
+	return runResults
+}
+
+func runAllConcurrent(runs []RunInput) []RunResult {
 	var wg sync.WaitGroup
 	results := make(chan RunResult, len(runs))
 
@@ -186,12 +267,11 @@ func runOne(runIndex int, run RunInput) (RunData, error) {
 
 	start := time.Now()
 	err = cmd.Run()
-	data.WallTime = time.Since(start)
-
 	if err != nil {
 		return data, err
 	}
 
+	data.WallTime = time.Since(start)
 	if cmd.ProcessState != nil {
 		data.SystemTime = cmd.ProcessState.SystemTime()
 		data.UserTime = cmd.ProcessState.UserTime()

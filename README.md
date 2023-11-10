@@ -1,0 +1,2 @@
+# Lossless PNG Optimizer Benchmark
+
